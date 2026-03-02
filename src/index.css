@@ -1,0 +1,33 @@
+:root {
+  --wallpaper-image: linear-gradient(125deg, #081113 0%, #15263b 34%, #2f1520 70%, #51212b 100%);
+  --panel-bg: rgba(10, 17, 29, 0.7);
+  --panel-border: rgba(212, 236, 255, 0.22);
+  --text-high: #f5faff;
+  --text-dim: rgba(225, 235, 244, 0.62);
+  --accent-green: #14ffa4;
+  --accent-cyan: #56d5ff;
+
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  line-height: 1.45;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  color: var(--text-high);
+  background-color: #03060c;
+  background-image: var(--wallpaper-image);
+  background-size: cover;
+  background-attachment: fixed;
+  background-position: center;
+}
