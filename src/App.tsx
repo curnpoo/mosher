@@ -59,6 +59,7 @@ function App() {
   const [showBoundingBoxes, setShowBoundingBoxes] = useState(true)
   const [maxTrackedBoxes, setMaxTrackedBoxes] = useState(12)
   const [noiseReduction, setNoiseReduction] = useState(false)
+  const [moshPaused, setMoshPaused] = useState(false)
 
   const [knockSoundEnabled, setKnockSoundEnabled] = useState(false)
   const [motionSynthEnabled, setMotionSynthEnabled] = useState(true)
@@ -143,6 +144,7 @@ function App() {
     mirrorVideo: facingPreference === 'front',
     persistence,
     drift,
+    moshPaused,
     refreshIntervalMs,
     refreshTrigger,
     threshold,
@@ -165,6 +167,12 @@ function App() {
       updateTracks([])
     }
   }, [enabled, mode, motionSynthEnabled, status, updateTracks])
+
+  useEffect(() => {
+    if (mode !== 'datamosh' || !enabled) {
+      setMoshPaused(false)
+    }
+  }, [enabled, mode])
   const streamReady = status === 'active'
 
   const toggleCamera = () => {
@@ -173,6 +181,15 @@ function App() {
 
   const refreshKeyframeNow = () => {
     setRefreshTrigger((prev) => prev + 1)
+  }
+
+  const toggleMoshPause = () => {
+    if (!moshPaused) {
+      refreshKeyframeNow()
+      setMoshPaused(true)
+      return
+    }
+    setMoshPaused(false)
   }
 
   const dismissSplash = () => {
@@ -432,8 +449,8 @@ function App() {
                 </div>
               ) : null}
               {mode === 'datamosh' ? (
-                <button type="button" className="canvas-fab" onClick={refreshKeyframeNow}>
-                  Refresh frame
+                <button type="button" className="canvas-fab" onClick={toggleMoshPause}>
+                  {moshPaused ? 'Resume' : 'Refresh'}
                 </button>
               ) : null}
               {!streamReady ? (
@@ -667,8 +684,8 @@ function App() {
           <TerminalWindow title="notes.txt" subtitle="./help/quickstart" className="window-info">
             <ul className="tips-list">
               <li>$ Video is mirrored to match expected webcam behavior.</li>
-              <li>$ Datamosh holds a captured keyframe until the next refresh.</li>
-              <li>$ Refresh now captures object state; interval refresh controls hold duration.</li>
+              <li>$ Refresh captures a new keyframe and freezes the mosh.</li>
+              <li>$ Resume continues moshing from the frozen frame.</li>
               <li>$ Tracker mode keeps the live feed normal while layering colorful multi-box trails.</li>
             </ul>
           </TerminalWindow>
@@ -824,8 +841,8 @@ function App() {
           </div>
 
           {mode === 'datamosh' ? (
-            <button type="button" className="refresh-fab" onClick={refreshKeyframeNow}>
-              Refresh
+            <button type="button" className="refresh-fab" onClick={toggleMoshPause}>
+              {moshPaused ? 'Resume' : 'Refresh'}
             </button>
           ) : null}
         </div>

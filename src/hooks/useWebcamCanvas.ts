@@ -16,6 +16,7 @@ type UseWebcamCanvasOptions = {
   mirrorVideo?: boolean
   persistence: number
   drift: number
+  moshPaused: boolean
   refreshIntervalMs: number
   refreshTrigger: number
   threshold: number
@@ -230,6 +231,44 @@ const applyDatamoshVectors = (
   const sampleMaxX = width - 1 - sampleInsetX
   const sampleMinY = sampleInsetY
   const sampleMaxY = height - 1 - sampleInsetY
+  const globalBlockSize = 16
+  const globalStride = 24
+  const globalSearch = Math.round(clamp(drift * 3.2, 6, 32))
+
+  let globalDx = 0
+  let globalDy = 0
+  let globalSamples = 0
+  for (let y = sampleMinY; y + globalBlockSize < sampleMaxY; y += globalStride) {
+    for (let x = sampleMinX; x + globalBlockSize < sampleMaxX; x += globalStride) {
+      let bestDx = 0
+      let bestDy = 0
+      let bestScore = Number.POSITIVE_INFINITY
+      for (let dy = -globalSearch; dy <= globalSearch; dy += 2) {
+        for (let dx = -globalSearch; dx <= globalSearch; dx += 2) {
+          const score = blockSad(curr, prev, width, height, x, y, globalBlockSize, dx, dy)
+          if (score < bestScore) {
+            bestScore = score
+            bestDx = dx
+            bestDy = dy
+          }
+        }
+      }
+      globalDx += bestDx
+      globalDy += bestDy
+      globalSamples += 1
+    }
+  }
+
+  if (globalSamples > 0) {
+    globalDx /= globalSamples
+    globalDy /= globalSamples
+    if (Math.abs(globalDx) < 0.5) {
+      globalDx = 0
+    }
+    if (Math.abs(globalDy) < 0.5) {
+      globalDy = 0
+    }
+  }
 
   for (let y = 0; y < height; y += blockSize) {
     for (let x = 0; x < width; x += blockSize) {
@@ -248,8 +287,8 @@ const applyDatamoshVectors = (
         }
       }
 
-      const sourceX = Math.round(x + bestDx * push)
-      const sourceY = Math.round(y + bestDy * push)
+      const sourceX = Math.round(x + (bestDx + globalDx) * push)
+      const sourceY = Math.round(y + (bestDy + globalDy) * push)
 
       for (let by = 0; by < blockSize; by += 1) {
         const ty = y + by
@@ -579,6 +618,7 @@ export function useWebcamCanvas({
   mirrorVideo = true,
   persistence,
   drift,
+  moshPaused,
   refreshIntervalMs,
   refreshTrigger,
   threshold,
@@ -916,6 +956,7 @@ export function useWebcamCanvas({
         }
 
         const intervalRefresh =
+          !moshPaused &&
           refreshIntervalMs > 0 &&
           timestamp - lastRefreshTimeRef.current >= refreshIntervalMs &&
           frameCounterRef.current > 0
@@ -924,7 +965,7 @@ export function useWebcamCanvas({
         if (shouldResetKeyframe) {
           moshFrameRef.current!.set(currData)
           lastRefreshTimeRef.current = timestamp
-        } else {
+        } else if (!moshPaused) {
           applyDatamoshVectors(
             workingCurrData,
             prevData,
@@ -1048,6 +1089,7 @@ export function useWebcamCanvas({
     status,
     persistence,
     drift,
+    moshPaused,
     refreshIntervalMs,
     refreshTrigger,
     threshold,
