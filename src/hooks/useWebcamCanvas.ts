@@ -12,6 +12,8 @@ type UseWebcamCanvasOptions = {
   mode: MoshMode
   enabled: boolean
   selectedDeviceId: string
+  preferredFacing?: 'front' | 'back'
+  mirrorVideo?: boolean
   persistence: number
   drift: number
   refreshIntervalMs: number
@@ -521,6 +523,8 @@ export function useWebcamCanvas({
   mode,
   enabled,
   selectedDeviceId,
+  preferredFacing = 'front',
+  mirrorVideo = true,
   persistence,
   drift,
   refreshIntervalMs,
@@ -639,13 +643,17 @@ export function useWebcamCanvas({
           height: { ideal: REQUEST_IDEAL_HEIGHT },
           aspectRatio: { ideal: REQUEST_IDEAL_ASPECT },
         }
+        const facingMode = preferredFacing === 'back' ? 'environment' : 'user'
         const constraints: MediaStreamConstraints = {
           video: selectedDeviceId
             ? {
                 deviceId: { exact: selectedDeviceId },
                 ...baseVideoConstraints,
               }
-            : baseVideoConstraints,
+            : {
+                ...baseVideoConstraints,
+                facingMode: { ideal: facingMode },
+              },
           audio: false,
         }
 
@@ -700,7 +708,7 @@ export function useWebcamCanvas({
         videoElement.srcObject = null
       }
     }
-  }, [enabled, selectedDeviceId])
+  }, [enabled, preferredFacing, selectedDeviceId])
 
   useEffect(() => {
     if (!enabled || status !== 'active') {
@@ -758,8 +766,12 @@ export function useWebcamCanvas({
 
       capCtx.save()
       capCtx.clearRect(0, 0, procWidth, procHeight)
-      capCtx.scale(-1, 1)
-      capCtx.drawImage(video, -procWidth, 0, procWidth, procHeight)
+      if (mirrorVideo) {
+        capCtx.scale(-1, 1)
+        capCtx.drawImage(video, -procWidth, 0, procWidth, procHeight)
+      } else {
+        capCtx.drawImage(video, 0, 0, procWidth, procHeight)
+      }
       capCtx.restore()
 
       const pixelCount = procWidth * procHeight * 4
@@ -904,6 +916,7 @@ export function useWebcamCanvas({
     showBoundingBoxes,
     maxTrackedBoxes,
     noiseReduction,
+    mirrorVideo,
   ])
 
   return {

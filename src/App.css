@@ -822,6 +822,23 @@ input[type='checkbox'] {
     transform: scale(0.98);
   }
 
+  .capture-toast {
+    position: absolute;
+    left: 0.75rem;
+    right: 0.75rem;
+    bottom: calc(env(safe-area-inset-bottom) + 8.1rem);
+    z-index: 13;
+    border: 1px solid rgba(212, 236, 255, 0.3);
+    background: rgba(6, 10, 16, 0.94);
+    color: rgba(236, 246, 255, 0.93);
+    padding: 0.62rem 0.72rem;
+    font-size: 0.73rem;
+    letter-spacing: 0.04em;
+    text-align: center;
+    backdrop-filter: blur(8px);
+    animation: fade-in 140ms ease;
+  }
+
   .settings-sheet {
     position: absolute;
     left: 0;

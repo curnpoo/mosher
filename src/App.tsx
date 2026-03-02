@@ -72,6 +72,7 @@ function App() {
     typeof window === 'undefined' ? false : window.innerWidth <= MOBILE_BREAKPOINT_PX,
   )
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null)
+  const [captureNotice, setCaptureNotice] = useState<string | null>(null)
   const [showSplash, setShowSplash] = useState(() => {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(SPLASH_KEY) !== '1'
@@ -82,6 +83,7 @@ function App() {
   const recordedMimeTypeRef = useRef('video/webm')
   const previewTimeoutRef = useRef<number | null>(null)
   const lastTouchTapRef = useRef(0)
+  const captureNoticeTimeoutRef = useRef<number | null>(null)
 
   const { playKnock, soundLoaded } = useKnockSound(knockSoundEnabled)
   const { soundLoaded: motionSynthLoaded, updateTracks } = useMotionSynth({
@@ -114,6 +116,9 @@ function App() {
       if (previewTimeoutRef.current) {
         window.clearTimeout(previewTimeoutRef.current)
       }
+      if (captureNoticeTimeoutRef.current) {
+        window.clearTimeout(captureNoticeTimeoutRef.current)
+      }
     }
   }, [])
 
@@ -133,6 +138,8 @@ function App() {
     mode,
     enabled,
     selectedDeviceId,
+    preferredFacing: facingPreference,
+    mirrorVideo: facingPreference === 'front',
     persistence,
     drift,
     refreshIntervalMs,
@@ -175,15 +182,40 @@ function App() {
   }
 
   const switchCameraFacing = useCallback(() => {
+    const nextFacing: FacingPref = facingPreference === 'back' ? 'front' : 'back'
+    setFacingPreference(nextFacing)
+
+    // On phones/tablets, letting getUserMedia use facingMode is more reliable than label matching.
+    if (isMobileLayout) {
+      setSelectedDeviceId('')
+      return
+    }
+
     if (devices.length < 2) {
       return
     }
 
-    const nextFacing: FacingPref = facingPreference === 'back' ? 'front' : 'back'
     const nextId = pickDeviceByFacing(devices, nextFacing, selectedDeviceId)
-    setFacingPreference(nextFacing)
     setSelectedDeviceId(nextId)
-  }, [devices, facingPreference, selectedDeviceId])
+  }, [devices, facingPreference, isMobileLayout, selectedDeviceId])
+
+  const handleDeviceSelection = useCallback(
+    (deviceId: string) => {
+      setSelectedDeviceId(deviceId)
+      const selected = devices.find((device) => device.id === deviceId)
+      if (!selected) {
+        return
+      }
+      if (isFrontLabel(selected.label)) {
+        setFacingPreference('front')
+        return
+      }
+      if (isBackLabel(selected.label)) {
+        setFacingPreference('back')
+      }
+    },
+    [devices],
+  )
 
   const handleStageTouchEnd = () => {
     const now = Date.now()
@@ -219,19 +251,71 @@ function App() {
     return 'webm'
   }
 
-  const downloadRecording = () => {
+  const showCaptureNotice = useCallback((message: string) => {
+    setCaptureNotice(message)
+    if (captureNoticeTimeoutRef.current) {
+      window.clearTimeout(captureNoticeTimeoutRef.current)
+    }
+    captureNoticeTimeoutRef.current = window.setTimeout(() => {
+      setCaptureNotice(null)
+      captureNoticeTimeoutRef.current = null
+    }, 2600)
+  }, [])
+
+  const isLikelyIOS = () => {
+    if (typeof navigator === 'undefined') return false
+    const ua = navigator.userAgent
+    const platform = navigator.platform
+    return /iPad|iPhone|iPod/i.test(ua) || (platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  }
+
+  const saveBlob = useCallback(
+    async (blob: Blob, fileName: string, mimeType: string) => {
+      const isMobile = isMobileLayout
+      if (isMobile && typeof navigator !== 'undefined' && 'share' in navigator && 'File' in window) {
+        try {
+          const file = new File([blob], fileName, { type: mimeType })
+          const canShareFiles =
+            typeof navigator.canShare === 'function' ? navigator.canShare({ files: [file] }) : true
+          if (canShareFiles) {
+            await navigator.share({
+              files: [file],
+              title: fileName,
+            })
+            showCaptureNotice(isLikelyIOS() ? 'Saved via share sheet.' : 'Shared successfully.')
+            return
+          }
+        } catch (shareError) {
+          // Ignore cancel/failure and fallback to URL download flow below.
+          console.debug('Share failed, falling back to download', shareError)
+        }
+      }
+
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = fileName
+      a.click()
+      window.setTimeout(() => {
+        URL.revokeObjectURL(url)
+      }, 1500)
+
+      if (isMobile && isLikelyIOS()) {
+        showCaptureNotice('If prompted, tap Download, then Save Image/Video to Photos.')
+      }
+    },
+    [isMobileLayout, showCaptureNotice],
+  )
+
+  const saveRecording = useCallback(async () => {
     if (recordedChunksRef.current.length === 0) return
     const mimeType = recordedMimeTypeRef.current
     const blob = new Blob(recordedChunksRef.current, { type: mimeType })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `mosh-recording-${Date.now()}.${getExtensionForMimeType(mimeType)}`
-    a.click()
-    URL.revokeObjectURL(url)
+    const fileName = `mosh-recording-${Date.now()}.${getExtensionForMimeType(mimeType)}`
+    await saveBlob(blob, fileName, mimeType)
     recordedChunksRef.current = []
     recordedMimeTypeRef.current = 'video/webm'
-  }
+  }, [saveBlob])
 
   const stopRecorder = useCallback(() => {
     const recorder = recorderRef.current
@@ -270,7 +354,7 @@ function App() {
 
       recorder.onstop = () => {
         setIsRecording(false)
-        downloadRecording()
+        void saveRecording()
       }
 
       recorder.start()
@@ -287,10 +371,13 @@ function App() {
     if (!canvas) return
 
     const dataUrl = canvas.toDataURL('image/jpeg', 0.88)
-    const a = document.createElement('a')
-    a.href = dataUrl
-    a.download = `mosh-photo-${Date.now()}.jpg`
-    a.click()
+    const save = (blob: Blob | null) => {
+      if (!blob) {
+        return
+      }
+      void saveBlob(blob, `mosh-photo-${Date.now()}.jpg`, 'image/jpeg')
+    }
+    canvas.toBlob(save, 'image/jpeg', 0.88)
 
     if (previewTimeoutRef.current) {
       window.clearTimeout(previewTimeoutRef.current)
@@ -366,7 +453,7 @@ function App() {
                   id="desktop-camera-select"
                   className="terminal-input"
                   value={resolvedSelectedDeviceId}
-                  onChange={(event) => setSelectedDeviceId(event.target.value)}
+                  onChange={(event) => handleDeviceSelection(event.target.value)}
                   disabled={devices.length === 0}
                 >
                   {devices.length === 0 ? <option value="">No cameras detected</option> : null}
@@ -733,6 +820,8 @@ function App() {
           ) : null}
         </div>
 
+        {captureNotice ? <div className="capture-toast">{captureNotice}</div> : null}
+
         {settingsOpen ? (
           <div className={`settings-sheet ${settingsOpen ? 'is-open' : ''}`}>
             <div className="settings-header">
@@ -748,7 +837,7 @@ function App() {
                 <select
                   id="camera-select"
                   value={resolvedSelectedDeviceId}
-                  onChange={(event) => setSelectedDeviceId(event.target.value)}
+                  onChange={(event) => handleDeviceSelection(event.target.value)}
                   disabled={devices.length === 0}
                 >
                   {devices.length === 0 ? <option value="">No cameras detected</option> : null}
