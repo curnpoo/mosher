@@ -75,20 +75,22 @@ const REQUEST_IDEAL_HEIGHT = 1080
 const REQUEST_IDEAL_ASPECT = 16 / 9
 const DEFAULT_PROCESSING_PIXELS = 640 * 360
 const MIN_PROCESSING_PIXELS = 240 * 135
-const MAX_PROCESSING_PIXELS = 960 * 540
+const MAX_DESKTOP_PROCESSING_PIXELS = 960 * 540
+const MAX_MOBILE_PROCESSING_PIXELS = 640 * 360
 const MIN_PROCESSING_WIDTH = 160
 const MIN_PROCESSING_HEIGHT = 90
 const EDGE_SAMPLE_INSET = 2
 const OUT_OF_BOUNDS_SAD_PENALTY = 420
 const RESOLUTION_ADJUST_INTERVAL_MS = 1100
-const ADAPTIVE_FPS_UP_THRESHOLD = 52
-const ADAPTIVE_FPS_DOWN_THRESHOLD = 34
-const ADAPTIVE_UPSCALE_FACTOR = 1.2
-const ADAPTIVE_DOWNSCALE_FACTOR = 0.8
+const ADAPTIVE_FPS_UP_THRESHOLD = 34
+const ADAPTIVE_FPS_DOWN_THRESHOLD = 28
+const ADAPTIVE_UPSCALE_FACTOR = 1.12
+const ADAPTIVE_DOWNSCALE_FACTOR = 0.85
 const ADAPTIVE_WARMUP_MS = 2200
 const MIN_BLOB_AREA_FLOOR = 180
 const MIN_BLOB_AREA_RATIO = 0.003
 const MIN_BLOB_EDGE = 12
+const MAX_BLOB_AREA_RATIO = 0.38
 const BLOB_MERGE_PADDING = 10
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
@@ -299,6 +301,7 @@ const findMotionBlobs = (
   threshold: number,
   maxResults: number,
   minBlobArea: number,
+  maxBlobAreaRatio: number,
 ): TrackBox[] => {
   const motionThreshold = Math.round(clamp(threshold, 4, 60))
   const mask = new Uint8Array(width * height)
@@ -367,7 +370,8 @@ const findMotionBlobs = (
 
       const boxWidth = maxX - minX + 1
       const boxHeight = maxY - minY + 1
-      if (area >= minBlobArea && boxWidth >= MIN_BLOB_EDGE && boxHeight >= MIN_BLOB_EDGE) {
+      const maxBlobArea = width * height * maxBlobAreaRatio
+      if (area >= minBlobArea && boxWidth >= MIN_BLOB_EDGE && boxHeight >= MIN_BLOB_EDGE && area <= maxBlobArea) {
         blobs.push({
           x: minX,
           y: minY,
@@ -617,12 +621,19 @@ export function useWebcamCanvas({
   const [fps, setFps] = useState(0)
   const [sourceResolution, setSourceResolution] = useState({ width: 0, height: 0 })
   const [processingResolution, setProcessingResolution] = useState({ width: 0, height: 0 })
-
   const streamRef = useRef<MediaStream | null>(null)
+
+  const screenWidth =
+    typeof window !== 'undefined' ? window.innerWidth || window.outerWidth || 1200 : 1200
+  const processingBudgetCapRef = useRef(
+    screenWidth <= 960 ? MAX_MOBILE_PROCESSING_PIXELS : MAX_DESKTOP_PROCESSING_PIXELS,
+  )
   const frameRef = useRef<number | null>(null)
   const previousTickRef = useRef<number>(0)
   const lastFpsUpdateRef = useRef<number>(0)
-  const adaptivePixelsRef = useRef<number>(DEFAULT_PROCESSING_PIXELS)
+  const adaptivePixelsRef = useRef<number>(
+    Math.min(DEFAULT_PROCESSING_PIXELS, processingBudgetCapRef.current),
+  )
   const fpsEmaRef = useRef<number>(60)
   const lastResolutionAdjustRef = useRef<number>(0)
   const adaptiveStartTimeRef = useRef<number>(0)
@@ -685,7 +696,7 @@ export function useWebcamCanvas({
       frameCounterRef.current = 0
       lastRefreshTimeRef.current = 0
       lastRefreshTriggerRef.current = 0
-      adaptivePixelsRef.current = DEFAULT_PROCESSING_PIXELS
+      adaptivePixelsRef.current = Math.min(DEFAULT_PROCESSING_PIXELS, processingBudgetCapRef.current)
       fpsEmaRef.current = 60
       lastResolutionAdjustRef.current = 0
       adaptiveStartTimeRef.current = 0
@@ -818,6 +829,7 @@ export function useWebcamCanvas({
     fpsEmaRef.current = 60
     lastResolutionAdjustRef.current = 0
     adaptiveStartTimeRef.current = 0
+    adaptivePixelsRef.current = Math.min(DEFAULT_PROCESSING_PIXELS, processingBudgetCapRef.current)
 
     const render = (timestamp: number) => {
       const width = video.videoWidth
@@ -957,6 +969,7 @@ export function useWebcamCanvas({
             threshold,
             maxTrackedBoxes,
             minBlobArea,
+            MAX_BLOB_AREA_RATIO,
           )
           const prevIds = new Set(trackRef.current.map((t) => t.id))
           trackRef.current = updateTrackedBoxes(
@@ -1001,17 +1014,15 @@ export function useWebcamCanvas({
         if (adaptiveStartTimeRef.current === 0) {
           adaptiveStartTimeRef.current = timestamp
         }
-        const inWarmup = timestamp - adaptiveStartTimeRef.current <= ADAPTIVE_WARMUP_MS
-        if (inWarmup) {
-          let nextPixels = adaptivePixelsRef.current
-          if (fpsEmaRef.current < ADAPTIVE_FPS_DOWN_THRESHOLD) {
-            nextPixels = Math.round(nextPixels * ADAPTIVE_DOWNSCALE_FACTOR)
-          } else if (fpsEmaRef.current > ADAPTIVE_FPS_UP_THRESHOLD) {
-            nextPixels = Math.round(nextPixels * ADAPTIVE_UPSCALE_FACTOR)
-          }
-
-          adaptivePixelsRef.current = clamp(nextPixels, MIN_PROCESSING_PIXELS, MAX_PROCESSING_PIXELS)
+        const allowUpscale = timestamp - adaptiveStartTimeRef.current >= ADAPTIVE_WARMUP_MS
+        const budgetCap = processingBudgetCapRef.current
+        let nextPixels = adaptivePixelsRef.current
+        if (fpsEmaRef.current < ADAPTIVE_FPS_DOWN_THRESHOLD) {
+          nextPixels = Math.round(nextPixels * ADAPTIVE_DOWNSCALE_FACTOR)
+        } else if (allowUpscale && fpsEmaRef.current > ADAPTIVE_FPS_UP_THRESHOLD) {
+          nextPixels = Math.round(nextPixels * ADAPTIVE_UPSCALE_FACTOR)
         }
+        adaptivePixelsRef.current = clamp(nextPixels, MIN_PROCESSING_PIXELS, budgetCap)
         lastResolutionAdjustRef.current = timestamp
       }
 
