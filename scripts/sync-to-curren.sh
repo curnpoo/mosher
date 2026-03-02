@@ -34,9 +34,9 @@ fi
 # Ensure /mosher/index.html loads assets relative to /mosher.
 if [[ -f "$TARGET_DIR/index.html" ]]; then
   sed -i '' \
-    -e 's|href="/vite.svg"|href="./vite.svg"|g' \
-    -e 's|src="/assets/|src="./assets/|g' \
-    -e 's|href="/assets/|href="./assets/|g' \
+    -e 's|href="/vite.svg"|href="/mosher/vite.svg"|g' \
+    -e 's|src="/assets/|src="/mosher/assets/|g' \
+    -e 's|href="/assets/|href="/mosher/assets/|g' \
     "$TARGET_DIR/index.html"
 fi
 
