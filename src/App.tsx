@@ -303,7 +303,7 @@ function App() {
             showCaptureNotice(isLikelyIOS() ? 'Saved via share sheet.' : 'Shared successfully.')
             return
           }
-        } catch (shareError) {
+        } catch (shareError: any) {
           // Share canceled? Skip fallback and just show notice.
           console.debug('Share failed, falling back to download', shareError)
           if (shareError && (shareError.name === 'AbortError' || shareError.name === 'NotAllowedError')) {
