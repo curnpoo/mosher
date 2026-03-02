@@ -32,9 +32,16 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: curnpoo/curren
-          token: ${{ secrets.CURREN_REPO_TOKEN }}
           path: curren-site
           ref: main
+
+      - name: Validate token for PR creation
+        run: |
+          if [ -z "${{ secrets.CURREN_REPO_TOKEN }}" ]; then
+            echo "::error::Missing secret CURREN_REPO_TOKEN in mosher repo settings."
+            echo "::error::Add a PAT with access to curnpoo/curren (contents:write, pull_requests:write)."
+            exit 1
+          fi
 
       - name: Sync built app into curren public folder
         run: |
