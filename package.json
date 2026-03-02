@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "sync:curren": "bash ./scripts/sync-to-curren.sh",
+    "publish:curren": "npm run build && npm run sync:curren"
   },
   "dependencies": {
     "react": "^19.2.0",

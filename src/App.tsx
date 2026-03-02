@@ -61,7 +61,7 @@ function App() {
   const [noiseReduction, setNoiseReduction] = useState(false)
 
   const [knockSoundEnabled, setKnockSoundEnabled] = useState(false)
-  const [motionSynthEnabled, setMotionSynthEnabled] = useState(false)
+  const [motionSynthEnabled, setMotionSynthEnabled] = useState(true)
   const [motionSynthRateMin, setMotionSynthRateMin] = useState(0.6)
   const [motionSynthRateMax, setMotionSynthRateMax] = useState(1.8)
   const [motionSynthGlideMs, setMotionSynthGlideMs] = useState(100)
@@ -100,28 +100,6 @@ function App() {
     [updateTracks],
   )
 
-  const { canvasRef, videoRef, devices, error, status, fps, sourceResolution, processingResolution } = useWebcamCanvas({
-    mode,
-    enabled,
-    selectedDeviceId,
-    persistence,
-    drift,
-    refreshIntervalMs,
-    refreshTrigger,
-    threshold,
-    showBoundingBoxes,
-    maxTrackedBoxes,
-    noiseReduction,
-    onNewBox: knockSoundEnabled ? playKnock : undefined,
-    onTracksFrame: motionSynthEnabled && mode === 'channel' ? handleTracksFrame : undefined,
-  })
-
-  useEffect(() => {
-    if (!(motionSynthEnabled && mode === 'channel' && enabled && status === 'active')) {
-      updateTracks([])
-    }
-  }, [enabled, mode, motionSynthEnabled, status, updateTracks])
-
   useEffect(() => {
     const onResize = () => {
       setIsMobileLayout(window.innerWidth <= MOBILE_BREAKPOINT_PX)
@@ -130,19 +108,6 @@ function App() {
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
-
-  useEffect(() => {
-    if (devices.length === 0) {
-      setSelectedDeviceId('')
-      return
-    }
-
-    const currentExists = selectedDeviceId && devices.some((device) => device.id === selectedDeviceId)
-    if (!currentExists) {
-      const nextId = pickDeviceByFacing(devices, facingPreference, selectedDeviceId)
-      setSelectedDeviceId(nextId)
-    }
-  }, [devices, facingPreference, selectedDeviceId])
 
   useEffect(() => {
     return () => {
@@ -159,18 +124,39 @@ function App() {
   }, [captureMode, isRecording])
 
   const modeLabel = useMemo(() => (mode === 'datamosh' ? 'mosh' : 'motion synth'), [mode])
-  const desktopModeLabel = useMemo(() => (mode === 'datamosh' ? 'datamosh' : 'channel-glitch'), [mode])
+  const desktopModeLabel = useMemo(() => (mode === 'datamosh' ? 'datamosh' : 'motion-synth'), [mode])
   const refreshLabel = useMemo(
     () => (refreshIntervalMs === 0 ? 'manual' : `${(refreshIntervalMs / 1000).toFixed(1)}s`),
     [refreshIntervalMs],
   )
+  const { canvasRef, videoRef, devices, error, status, fps, sourceResolution, processingResolution } = useWebcamCanvas({
+    mode,
+    enabled,
+    selectedDeviceId,
+    persistence,
+    drift,
+    refreshIntervalMs,
+    refreshTrigger,
+    threshold,
+    showBoundingBoxes,
+    maxTrackedBoxes,
+    noiseReduction,
+    onNewBox: knockSoundEnabled ? playKnock : undefined,
+    onTracksFrame: motionSynthEnabled && mode === 'channel' ? handleTracksFrame : undefined,
+  })
   const resolvedSelectedDeviceId = useMemo(() => {
     if (devices.length === 0) return ''
     if (selectedDeviceId && devices.some((device) => device.id === selectedDeviceId)) {
       return selectedDeviceId
     }
-    return devices[0].id
-  }, [devices, selectedDeviceId])
+    return pickDeviceByFacing(devices, facingPreference, selectedDeviceId)
+  }, [devices, facingPreference, selectedDeviceId])
+
+  useEffect(() => {
+    if (!(motionSynthEnabled && mode === 'channel' && enabled && status === 'active')) {
+      updateTracks([])
+    }
+  }, [enabled, mode, motionSynthEnabled, status, updateTracks])
   const streamReady = status === 'active'
 
   const toggleCamera = () => {
@@ -473,6 +459,17 @@ function App() {
                 </>
               ) : (
                 <>
+                  <div className="control-row">
+                    <button
+                      type="button"
+                      className={`terminal-button motion-synth-toggle ${motionSynthEnabled ? 'is-active' : ''}`}
+                      onClick={() => setMotionSynthEnabled((prev) => !prev)}
+                    >
+                      {motionSynthEnabled
+                        ? `Motion Synth On${!motionSynthLoaded ? ' (loading...)' : ''}`
+                        : 'Motion Synth Off'}
+                    </button>
+                  </div>
                   <label className="control-row" htmlFor="desktop-threshold-range">
                     <span className="prompt">$ motion sensitivity: {threshold}</span>
                     <input
@@ -515,13 +512,52 @@ function App() {
                       onChange={(event) => setKnockSoundEnabled(event.target.checked)}
                     />
                   </label>
-                  <label className="control-row control-row-inline" htmlFor="desktop-motion-synth-toggle">
-                    <span className="prompt">$ motion synth{motionSynthEnabled && !motionSynthLoaded ? ' (loading...)' : ''}</span>
+                  <label className="control-row" htmlFor="desktop-motion-synth-rate-min-range">
+                    <span className="prompt">$ synth low rate: {motionSynthRateMin.toFixed(2)}</span>
                     <input
-                      id="desktop-motion-synth-toggle"
-                      type="checkbox"
-                      checked={motionSynthEnabled}
-                      onChange={(event) => setMotionSynthEnabled(event.target.checked)}
+                      id="desktop-motion-synth-rate-min-range"
+                      type="range"
+                      min={0.2}
+                      max={3}
+                      step={0.05}
+                      value={motionSynthRateMin}
+                      onChange={(event) => setMotionSynthRateMin(clamp(Number(event.target.value), 0.2, 3))}
+                    />
+                  </label>
+                  <label className="control-row" htmlFor="desktop-motion-synth-rate-max-range">
+                    <span className="prompt">$ synth high rate: {motionSynthRateMax.toFixed(2)}</span>
+                    <input
+                      id="desktop-motion-synth-rate-max-range"
+                      type="range"
+                      min={0.3}
+                      max={4}
+                      step={0.05}
+                      value={motionSynthRateMax}
+                      onChange={(event) => setMotionSynthRateMax(clamp(Number(event.target.value), 0.3, 4))}
+                    />
+                  </label>
+                  <label className="control-row" htmlFor="desktop-motion-synth-glide-range">
+                    <span className="prompt">$ synth glide ms: {motionSynthGlideMs}</span>
+                    <input
+                      id="desktop-motion-synth-glide-range"
+                      type="range"
+                      min={20}
+                      max={400}
+                      step={10}
+                      value={motionSynthGlideMs}
+                      onChange={(event) => setMotionSynthGlideMs(clamp(Number(event.target.value), 20, 400))}
+                    />
+                  </label>
+                  <label className="control-row" htmlFor="desktop-motion-synth-max-voices-range">
+                    <span className="prompt">$ synth voices: {motionSynthMaxVoices}</span>
+                    <input
+                      id="desktop-motion-synth-max-voices-range"
+                      type="range"
+                      min={1}
+                      max={8}
+                      step={1}
+                      value={motionSynthMaxVoices}
+                      onChange={(event) => setMotionSynthMaxVoices(clamp(Number(event.target.value), 1, 8))}
                     />
                   </label>
                 </>
@@ -711,7 +747,7 @@ function App() {
                 <span>$ camera</span>
                 <select
                   id="camera-select"
-                  value={selectedDeviceId}
+                  value={resolvedSelectedDeviceId}
                   onChange={(event) => setSelectedDeviceId(event.target.value)}
                   disabled={devices.length === 0}
                 >

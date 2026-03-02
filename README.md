@@ -172,6 +172,19 @@ npm run build
 npm run preview
 ```
 
+### Sync to curren.dev website project
+
+To copy the latest built app into your `curren` website repo:
+
+```bash
+npm run publish:curren
+```
+
+This runs a build and syncs output to:
+
+- `/Users/curren/Documents/projects/curren/public/mosher`
+- `/Users/curren/Documents/projects/curren/public/sounds`
+
 ---
 
 ## Deployment Notes
@@ -200,4 +213,3 @@ npm run preview
 
 - Camera frames are processed client-side in the browser.
 - No backend upload pipeline is required by this app.
-

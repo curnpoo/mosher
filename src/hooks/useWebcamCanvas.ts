@@ -68,8 +68,9 @@ type TrackedBox = {
   trail: TrailPoint[]
 }
 
-const REQUEST_MAX_WIDTH = 7680
-const REQUEST_MAX_HEIGHT = 4320
+const REQUEST_IDEAL_WIDTH = 1920
+const REQUEST_IDEAL_HEIGHT = 1080
+const REQUEST_IDEAL_ASPECT = 16 / 9
 const MAX_PROCESSING_PIXELS = 400 * 225
 const MIN_PROCESSING_WIDTH = 160
 const MIN_PROCESSING_HEIGHT = 90
@@ -634,8 +635,9 @@ export function useWebcamCanvas({
 
       try {
         const baseVideoConstraints = {
-          width: { ideal: REQUEST_MAX_WIDTH },
-          height: { ideal: REQUEST_MAX_HEIGHT },
+          width: { ideal: REQUEST_IDEAL_WIDTH },
+          height: { ideal: REQUEST_IDEAL_HEIGHT },
+          aspectRatio: { ideal: REQUEST_IDEAL_ASPECT },
         }
         const constraints: MediaStreamConstraints = {
           video: selectedDeviceId
