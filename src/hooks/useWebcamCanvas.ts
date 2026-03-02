@@ -73,9 +73,19 @@ type TrackedBox = {
 const REQUEST_IDEAL_WIDTH = 1920
 const REQUEST_IDEAL_HEIGHT = 1080
 const REQUEST_IDEAL_ASPECT = 16 / 9
-const MAX_PROCESSING_PIXELS = 400 * 225
+const DEFAULT_PROCESSING_PIXELS = 640 * 360
+const MIN_PROCESSING_PIXELS = 240 * 135
+const MAX_PROCESSING_PIXELS = 960 * 540
 const MIN_PROCESSING_WIDTH = 160
 const MIN_PROCESSING_HEIGHT = 90
+const EDGE_SAMPLE_INSET = 2
+const OUT_OF_BOUNDS_SAD_PENALTY = 420
+const RESOLUTION_ADJUST_INTERVAL_MS = 1100
+const ADAPTIVE_FPS_UP_THRESHOLD = 52
+const ADAPTIVE_FPS_DOWN_THRESHOLD = 34
+const ADAPTIVE_UPSCALE_FACTOR = 1.2
+const ADAPTIVE_DOWNSCALE_FACTOR = 0.8
+const ADAPTIVE_WARMUP_MS = 2200
 const MIN_BLOB_AREA_FLOOR = 180
 const MIN_BLOB_AREA_RATIO = 0.003
 const MIN_BLOB_EDGE = 12
@@ -85,13 +95,36 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 const isFrontFacingLabel = (label: string) => /(front|facetime|user)/i.test(label)
 const isBackFacingLabel = (label: string) => /(back|rear|environment|world)/i.test(label)
 
-const getProcessingSize = (width: number, height: number) => {
-  const scale = Math.min(1, Math.sqrt(MAX_PROCESSING_PIXELS / Math.max(1, width * height)))
+const getProcessingSize = (width: number, height: number, maxProcessingPixels: number) => {
+  const scale = Math.min(1, Math.sqrt(maxProcessingPixels / Math.max(1, width * height)))
   const scaledWidth = Math.round(width * scale)
   const scaledHeight = Math.round(height * scale)
   const procWidth = clamp(scaledWidth, MIN_PROCESSING_WIDTH, width)
   const procHeight = clamp(scaledHeight, MIN_PROCESSING_HEIGHT, height)
   return { width: procWidth, height: procHeight }
+}
+
+const resizePixelBuffer = (
+  source: Uint8ClampedArray,
+  sourceWidth: number,
+  sourceHeight: number,
+  targetWidth: number,
+  targetHeight: number,
+): Uint8ClampedArray => {
+  const output = new Uint8ClampedArray(targetWidth * targetHeight * 4)
+  for (let y = 0; y < targetHeight; y += 1) {
+    const sy = Math.min(sourceHeight - 1, Math.floor((y * sourceHeight) / targetHeight))
+    for (let x = 0; x < targetWidth; x += 1) {
+      const sx = Math.min(sourceWidth - 1, Math.floor((x * sourceWidth) / targetWidth))
+      const sourceIdx = (sy * sourceWidth + sx) * 4
+      const targetIdx = (y * targetWidth + x) * 4
+      output[targetIdx] = source[sourceIdx]
+      output[targetIdx + 1] = source[sourceIdx + 1]
+      output[targetIdx + 2] = source[sourceIdx + 2]
+      output[targetIdx + 3] = source[sourceIdx + 3]
+    }
+  }
+  return output
 }
 
 const applyBoxBlur = (source: Uint8ClampedArray, width: number, height: number) => {
@@ -151,14 +184,16 @@ const blockSad = (
   for (let by = 0; by < blockSize; by += 2) {
     const py = y + by
     const qy = py + dy
-    if (py >= height || qy < 0 || qy >= height) {
+    if (py >= height || qy < EDGE_SAMPLE_INSET || qy >= height - EDGE_SAMPLE_INSET) {
+      sad += OUT_OF_BOUNDS_SAD_PENALTY
       continue
     }
 
     for (let bx = 0; bx < blockSize; bx += 2) {
       const px = x + bx
       const qx = px + dx
-      if (px >= width || qx < 0 || qx >= width) {
+      if (px >= width || qx < EDGE_SAMPLE_INSET || qx >= width - EDGE_SAMPLE_INSET) {
+        sad += OUT_OF_BOUNDS_SAD_PENALTY
         continue
       }
 
@@ -187,6 +222,12 @@ const applyDatamoshVectors = (
   const blockSize = 8
   const search = Math.round(clamp(drift * 2.5, 4, 24))
   const push = 1 + clamp(drift * 0.18, 0, 2.5)
+  const sampleInsetX = Math.min(EDGE_SAMPLE_INSET, Math.floor((width - 1) / 2))
+  const sampleInsetY = Math.min(EDGE_SAMPLE_INSET, Math.floor((height - 1) / 2))
+  const sampleMinX = sampleInsetX
+  const sampleMaxX = width - 1 - sampleInsetX
+  const sampleMinY = sampleInsetY
+  const sampleMaxY = height - 1 - sampleInsetY
 
   for (let y = 0; y < height; y += blockSize) {
     for (let x = 0; x < width; x += blockSize) {
@@ -220,15 +261,20 @@ const applyDatamoshVectors = (
             continue
           }
 
-          const sx = clamp(sourceX + bx, 0, width - 1)
-          const sy = clamp(sourceY + by, 0, height - 1)
+          const sx = sourceX + bx
+          const sy = sourceY + by
 
           const outIdx = (ty * width + tx) * 4
-          const srcIdx = (sy * width + sx) * 4
-
-          out[outIdx] = mosh[srcIdx]
-          out[outIdx + 1] = mosh[srcIdx + 1]
-          out[outIdx + 2] = mosh[srcIdx + 2]
+          if (sx < sampleMinX || sx > sampleMaxX || sy < sampleMinY || sy > sampleMaxY) {
+            out[outIdx] = curr[outIdx]
+            out[outIdx + 1] = curr[outIdx + 1]
+            out[outIdx + 2] = curr[outIdx + 2]
+          } else {
+            const srcIdx = (sy * width + sx) * 4
+            out[outIdx] = mosh[srcIdx]
+            out[outIdx + 1] = mosh[srcIdx + 1]
+            out[outIdx + 2] = mosh[srcIdx + 2]
+          }
           out[outIdx + 3] = 255
         }
       }
@@ -576,6 +622,11 @@ export function useWebcamCanvas({
   const frameRef = useRef<number | null>(null)
   const previousTickRef = useRef<number>(0)
   const lastFpsUpdateRef = useRef<number>(0)
+  const adaptivePixelsRef = useRef<number>(DEFAULT_PROCESSING_PIXELS)
+  const fpsEmaRef = useRef<number>(60)
+  const lastResolutionAdjustRef = useRef<number>(0)
+  const adaptiveStartTimeRef = useRef<number>(0)
+  const processingSizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 })
 
   useEffect(() => {
     const enumerate = async () => {
@@ -634,6 +685,11 @@ export function useWebcamCanvas({
       frameCounterRef.current = 0
       lastRefreshTimeRef.current = 0
       lastRefreshTriggerRef.current = 0
+      adaptivePixelsRef.current = DEFAULT_PROCESSING_PIXELS
+      fpsEmaRef.current = 60
+      lastResolutionAdjustRef.current = 0
+      adaptiveStartTimeRef.current = 0
+      processingSizeRef.current = { width: 0, height: 0 }
       return
     }
 
@@ -759,6 +815,9 @@ export function useWebcamCanvas({
 
     previousTickRef.current = performance.now()
     lastFpsUpdateRef.current = performance.now()
+    fpsEmaRef.current = 60
+    lastResolutionAdjustRef.current = 0
+    adaptiveStartTimeRef.current = 0
 
     const render = (timestamp: number) => {
       const width = video.videoWidth
@@ -774,7 +833,7 @@ export function useWebcamCanvas({
         canvas.height = height
       }
 
-      const processingSize = getProcessingSize(width, height)
+      const processingSize = getProcessingSize(width, height, adaptivePixelsRef.current)
       const procWidth = processingSize.width
       const procHeight = processingSize.height
       setProcessingResolution((prev) =>
@@ -797,13 +856,40 @@ export function useWebcamCanvas({
 
       const pixelCount = procWidth * procHeight * 4
       if (bufSizeRef.current !== pixelCount) {
-        prevFrameRef.current = new Uint8ClampedArray(pixelCount)
-        moshFrameRef.current = new Uint8ClampedArray(pixelCount)
-        moshOutBufRef.current = new Uint8ClampedArray(pixelCount)
+        const previousSize = processingSizeRef.current
+        const hadPreviousBuffers =
+          previousSize.width > 0 &&
+          previousSize.height > 0 &&
+          prevFrameRef.current !== null &&
+          moshFrameRef.current !== null
+
+        if (hadPreviousBuffers) {
+          prevFrameRef.current = resizePixelBuffer(
+            prevFrameRef.current!,
+            previousSize.width,
+            previousSize.height,
+            procWidth,
+            procHeight,
+          )
+          moshFrameRef.current = resizePixelBuffer(
+            moshFrameRef.current!,
+            previousSize.width,
+            previousSize.height,
+            procWidth,
+            procHeight,
+          )
+          moshOutBufRef.current = new Uint8ClampedArray(moshFrameRef.current)
+        } else {
+          prevFrameRef.current = new Uint8ClampedArray(pixelCount)
+          moshFrameRef.current = new Uint8ClampedArray(pixelCount)
+          moshOutBufRef.current = new Uint8ClampedArray(pixelCount)
+          frameCounterRef.current = 0
+          lastRefreshTimeRef.current = 0
+        }
+
         moshImageDataRef.current = new ImageData(procWidth, procHeight)
         bufSizeRef.current = pixelCount
-        frameCounterRef.current = 0
-        lastRefreshTimeRef.current = 0
+        processingSizeRef.current = { width: procWidth, height: procHeight }
       }
 
       const currImage = capCtx.getImageData(0, 0, procWidth, procHeight)
@@ -908,9 +994,29 @@ export function useWebcamCanvas({
 
       const delta = Math.max(1, timestamp - previousTickRef.current)
       previousTickRef.current = timestamp
+      const instantFps = 1000 / delta
+      fpsEmaRef.current = fpsEmaRef.current * 0.88 + instantFps * 0.12
+
+      if (timestamp - lastResolutionAdjustRef.current >= RESOLUTION_ADJUST_INTERVAL_MS) {
+        if (adaptiveStartTimeRef.current === 0) {
+          adaptiveStartTimeRef.current = timestamp
+        }
+        const inWarmup = timestamp - adaptiveStartTimeRef.current <= ADAPTIVE_WARMUP_MS
+        if (inWarmup) {
+          let nextPixels = adaptivePixelsRef.current
+          if (fpsEmaRef.current < ADAPTIVE_FPS_DOWN_THRESHOLD) {
+            nextPixels = Math.round(nextPixels * ADAPTIVE_DOWNSCALE_FACTOR)
+          } else if (fpsEmaRef.current > ADAPTIVE_FPS_UP_THRESHOLD) {
+            nextPixels = Math.round(nextPixels * ADAPTIVE_UPSCALE_FACTOR)
+          }
+
+          adaptivePixelsRef.current = clamp(nextPixels, MIN_PROCESSING_PIXELS, MAX_PROCESSING_PIXELS)
+        }
+        lastResolutionAdjustRef.current = timestamp
+      }
 
       if (timestamp - lastFpsUpdateRef.current > 220) {
-        setFps((prev) => prev * 0.4 + (1000 / delta) * 0.6)
+        setFps((prev) => prev * 0.4 + instantFps * 0.6)
         lastFpsUpdateRef.current = timestamp
       }
 

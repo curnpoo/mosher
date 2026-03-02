@@ -14,6 +14,7 @@ type UseMotionSynthOptions = {
 type MotionSynthResult = {
   soundLoaded: boolean
   updateTracks: (tracks: MotionTrackFrame[]) => void
+  getCaptureStream: () => MediaStream | null
 }
 
 type Voice = {
@@ -52,6 +53,7 @@ export function useMotionSynth({ enabled, sampleUrl, rateMin, rateMax, glideMs, 
   const hasSharedContextRef = useRef(false)
   const bufferRef = useRef<AudioBuffer | null>(null)
   const outputRef = useRef<GainNode | null>(null)
+  const captureDestinationRef = useRef<MediaStreamAudioDestinationNode | null>(null)
   const voicesRef = useRef<Map<number, Voice>>(new Map())
   const [soundLoaded, setSoundLoaded] = useState(false)
 
@@ -168,10 +170,13 @@ export function useMotionSynth({ enabled, sampleUrl, rateMin, rateMax, glideMs, 
         const output = ctx.createGain()
         output.gain.value = 1
         output.connect(ctx.destination)
+        const captureDestination = ctx.createMediaStreamDestination()
+        output.connect(captureDestination)
 
         ctxRef.current = ctx
         bufferRef.current = decoded
         outputRef.current = output
+        captureDestinationRef.current = captureDestination
         setSoundLoaded(true)
       } catch (error) {
         console.error('[useMotionSynth] Failed to load sample:', error)
@@ -198,6 +203,7 @@ export function useMotionSynth({ enabled, sampleUrl, rateMin, rateMax, glideMs, 
       voices.clear()
       outputRef.current?.disconnect()
       outputRef.current = null
+      captureDestinationRef.current = null
       bufferRef.current = null
       setSoundLoaded(false)
       if (hasSharedContextRef.current) {
@@ -272,5 +278,9 @@ export function useMotionSynth({ enabled, sampleUrl, rateMin, rateMax, glideMs, 
     [enabled, glideMs, maxVoices, rateMax, rateMin, releaseVoice, startVoiceScheduler],
   )
 
-  return { soundLoaded, updateTracks }
+  const getCaptureStream = useCallback(() => {
+    return captureDestinationRef.current?.stream ?? null
+  }, [])
+
+  return { soundLoaded, updateTracks, getCaptureStream }
 }

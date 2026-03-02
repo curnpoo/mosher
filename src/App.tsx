@@ -79,6 +79,7 @@ function App() {
   })
 
   const recorderRef = useRef<MediaRecorder | null>(null)
+  const recordingStreamRef = useRef<MediaStream | null>(null)
   const recordedChunksRef = useRef<BlobPart[]>([])
   const recordedMimeTypeRef = useRef('video/webm')
   const previewTimeoutRef = useRef<number | null>(null)
@@ -86,7 +87,7 @@ function App() {
   const captureNoticeTimeoutRef = useRef<number | null>(null)
 
   const { playKnock, soundLoaded } = useKnockSound(knockSoundEnabled)
-  const { soundLoaded: motionSynthLoaded, updateTracks } = useMotionSynth({
+  const { soundLoaded: motionSynthLoaded, updateTracks, getCaptureStream } = useMotionSynth({
     enabled: motionSynthEnabled && mode === 'channel',
     sampleUrl: '/sounds/heaven-synth-451981.mp3',
     rateMin: motionSynthRateMin,
@@ -333,7 +334,11 @@ function App() {
     const canvas = canvasRef.current
     if (!canvas) return
 
-    const stream = canvas.captureStream(30)
+    const canvasStream = canvas.captureStream(30)
+    const stream = new MediaStream()
+    canvasStream.getVideoTracks().forEach((track) => stream.addTrack(track))
+    const synthCaptureStream = getCaptureStream()
+    synthCaptureStream?.getAudioTracks().forEach((track) => stream.addTrack(track))
     recordedChunksRef.current = []
 
     try {
@@ -354,14 +359,19 @@ function App() {
 
       recorder.onstop = () => {
         setIsRecording(false)
+        recordingStreamRef.current?.getTracks().forEach((track) => track.stop())
+        recordingStreamRef.current = null
         void saveRecording()
       }
 
       recorder.start()
       recorderRef.current = recorder
+      recordingStreamRef.current = stream
       setIsRecording(true)
     } catch (recordingError) {
       console.error('MediaRecorder error', recordingError)
+      stream.getTracks().forEach((track) => track.stop())
+      recordingStreamRef.current = null
       setIsRecording(false)
     }
   }
@@ -855,6 +865,7 @@ function App() {
                     <span>$ pixel inject: {persistence.toFixed(2)}</span>
                     <input
                       id="persistence-range"
+                      className="mobile-range"
                       type="range"
                       min={0}
                       max={0.4}
@@ -867,6 +878,7 @@ function App() {
                     <span>$ vector push: {drift.toFixed(1)}</span>
                     <input
                       id="drift-range"
+                      className="mobile-range"
                       type="range"
                       min={1}
                       max={12}
@@ -881,6 +893,7 @@ function App() {
                     ).toFixed(1)}s`}</span>
                     <input
                       id="refresh-interval-range"
+                      className="mobile-range"
                       type="range"
                       min={0}
                       max={4000}
@@ -905,6 +918,7 @@ function App() {
                     <span>$ motion sensitivity: {threshold}</span>
                     <input
                       id="threshold-range"
+                      className="mobile-range"
                       type="range"
                       min={4}
                       max={20}
@@ -917,6 +931,7 @@ function App() {
                     <span>$ max tracked boxes: {maxTrackedBoxes}</span>
                     <input
                       id="max-tracked-range"
+                      className="mobile-range"
                       type="range"
                       min={3}
                       max={80}
@@ -956,6 +971,7 @@ function App() {
                     <span>$ synth low rate: {motionSynthRateMin.toFixed(2)}</span>
                     <input
                       id="motion-synth-rate-min-range"
+                      className="mobile-range"
                       type="range"
                       min={0.2}
                       max={3}
@@ -968,6 +984,7 @@ function App() {
                     <span>$ synth high rate: {motionSynthRateMax.toFixed(2)}</span>
                     <input
                       id="motion-synth-rate-max-range"
+                      className="mobile-range"
                       type="range"
                       min={0.3}
                       max={4}
@@ -980,6 +997,7 @@ function App() {
                     <span>$ synth glide ms: {motionSynthGlideMs}</span>
                     <input
                       id="motion-synth-glide-range"
+                      className="mobile-range"
                       type="range"
                       min={20}
                       max={400}
@@ -992,6 +1010,7 @@ function App() {
                     <span>$ synth voices: {motionSynthMaxVoices}</span>
                     <input
                       id="motion-synth-max-voices-range"
+                      className="mobile-range"
                       type="range"
                       min={1}
                       max={8}
