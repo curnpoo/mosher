@@ -304,8 +304,12 @@ function App() {
             return
           }
         } catch (shareError) {
-          // Ignore cancel/failure and fallback to URL download flow below.
+          // Share canceled? Skip fallback and just show notice.
           console.debug('Share failed, falling back to download', shareError)
+          if (shareError && (shareError.name === 'AbortError' || shareError.name === 'NotAllowedError')) {
+            showCaptureNotice('Share cancelled.')
+            return
+          }
         }
       }
 
