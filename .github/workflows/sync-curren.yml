@@ -1,0 +1,65 @@
+name: Sync Mosher to curren site
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout mosher
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Build mosher
+        run: |
+          npm ci
+          npm run build
+
+      - name: Checkout curren repo
+        uses: actions/checkout@v4
+        with:
+          repository: curnpoo/curren
+          token: ${{ secrets.CURREN_REPO_TOKEN }}
+          path: curren-site
+          ref: main
+
+      - name: Sync built app into curren public folder
+        run: |
+          rm -rf curren-site/public/mosher
+          mkdir -p curren-site/public/mosher
+          cp -R dist/. curren-site/public/mosher/
+
+          mkdir -p curren-site/public/sounds
+          cp -R dist/sounds/. curren-site/public/sounds/
+
+          # rewrite absolute asset paths for /mosher hosting
+          sed -i 's|href="/vite.svg"|href="./vite.svg"|g' curren-site/public/mosher/index.html
+          sed -i 's|src="/assets/|src="./assets/|g' curren-site/public/mosher/index.html
+          sed -i 's|href="/assets/|href="./assets/|g' curren-site/public/mosher/index.html
+
+      - name: Create PR in curren
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.CURREN_REPO_TOKEN }}
+          path: curren-site
+          commit-message: "Sync mosher build output"
+          branch: "bot/sync-mosher-build"
+          delete-branch: true
+          title: "Sync Mosher build"
+          body: |
+            Automated sync from mosher main.
+            - Updated public/mosher bundle
+            - Updated public/sounds assets
