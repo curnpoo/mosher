@@ -82,6 +82,8 @@ const MIN_BLOB_EDGE = 12
 const BLOB_MERGE_PADDING = 10
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+const isFrontFacingLabel = (label: string) => /(front|facetime|user)/i.test(label)
+const isBackFacingLabel = (label: string) => /(back|rear|environment|world)/i.test(label)
 
 const getProcessingSize = (width: number, height: number) => {
   const scale = Math.min(1, Math.sqrt(MAX_PROCESSING_PIXELS / Math.max(1, width * height)))
@@ -552,12 +554,16 @@ export function useWebcamCanvas({
   const lastRefreshTriggerRef = useRef(0)
   const onNewBoxRef = useRef(onNewBox)
   const onTracksFrameRef = useRef(onTracksFrame)
+  const mirrorVideoRef = useRef(mirrorVideo)
   useEffect(() => {
     onNewBoxRef.current = onNewBox
   }, [onNewBox])
   useEffect(() => {
     onTracksFrameRef.current = onTracksFrame
   }, [onTracksFrame])
+  useEffect(() => {
+    mirrorVideoRef.current = mirrorVideo
+  }, [mirrorVideo])
 
   const [devices, setDevices] = useState<VideoInputDevice[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -668,6 +674,21 @@ export function useWebcamCanvas({
         }
 
         streamRef.current = stream
+        const activeTrack = stream.getVideoTracks()[0]
+        const detectedFacingMode = activeTrack?.getSettings?.().facingMode
+        const trackLabel = activeTrack?.label ?? ''
+        if (detectedFacingMode === 'user' || (!detectedFacingMode && isFrontFacingLabel(trackLabel))) {
+          mirrorVideoRef.current = true
+        } else if (
+          detectedFacingMode === 'environment' ||
+          detectedFacingMode === 'rear' ||
+          (!detectedFacingMode && isBackFacingLabel(trackLabel))
+        ) {
+          mirrorVideoRef.current = false
+        } else {
+          // Keep caller preference when track does not expose reliable facing metadata.
+          mirrorVideoRef.current = mirrorVideo
+        }
         const video = videoElement
         if (!video) {
           return
@@ -708,7 +729,7 @@ export function useWebcamCanvas({
         videoElement.srcObject = null
       }
     }
-  }, [enabled, preferredFacing, selectedDeviceId])
+  }, [enabled, mirrorVideo, preferredFacing, selectedDeviceId])
 
   useEffect(() => {
     if (!enabled || status !== 'active') {
@@ -766,7 +787,7 @@ export function useWebcamCanvas({
 
       capCtx.save()
       capCtx.clearRect(0, 0, procWidth, procHeight)
-      if (mirrorVideo) {
+      if (mirrorVideoRef.current) {
         capCtx.scale(-1, 1)
         capCtx.drawImage(video, -procWidth, 0, procWidth, procHeight)
       } else {
