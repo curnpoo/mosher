@@ -12,6 +12,8 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    env:
+      CURREN_REPO: curnpoo/curren
 
     steps:
       - name: Checkout mosher
@@ -28,20 +30,20 @@ jobs:
           npm ci
           npm run build
 
-      - name: Checkout curren repo
-        uses: actions/checkout@v4
-        with:
-          repository: curnpoo/curren
-          path: curren-site
-          ref: main
-
-      - name: Validate token for PR creation
+      - name: Validate token for cross-repo access
         run: |
           if [ -z "${{ secrets.CURREN_REPO_TOKEN }}" ]; then
             echo "::error::Missing secret CURREN_REPO_TOKEN in mosher repo settings."
             echo "::error::Add a PAT with access to curnpoo/curren (contents:write, pull_requests:write)."
             exit 1
           fi
+
+      - name: Checkout curren repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.CURREN_REPO }}
+          token: ${{ secrets.CURREN_REPO_TOKEN }}
+          path: curren-site
 
       - name: Sync built app into curren public folder
         run: |
